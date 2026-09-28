@@ -30,54 +30,88 @@ def load_and_process_data():
 
 df_yearly = load_and_process_data()
 
-# 3. 회귀 모델 계산 (독립변수: 1908년부터 지난 연수)
-# X = 연도 - 1908, y = 연평균기온
+# 3. 전체 기간 회귀 모델 (독립변수: 1908년부터 지난 연수)
 df_yearly["x"] = df_yearly["연도"] - 1908
-X = df_yearly["x"].values
-y = df_yearly["연평균기온"].values
+X_all = df_yearly["x"].values
+y_all = df_yearly["연평균기온"].values
 
-# 선형 회귀 계수 (y = slope * x + intercept)
-slope, intercept = np.polyfit(X, y, 1)
+slope_all, intercept_all = np.polyfit(X_all, y_all, 1)
 
-# 상관계수 계산
-corr_matrix = np.corrcoef(X, y)
-correlation = corr_matrix[0, 1]
+# 4. 최근 20년 회귀 모델 (기준: 데이터의 가장 최근 연도 포함 20년)
+max_year = int(df_yearly["연도"].max())
+min_year_recent = max_year - 19
+df_recent = df_yearly[df_yearly["연도"] >= min_year_recent].copy()
 
-# 데이터 정보 추출
+X_recent = df_recent["x"].values
+y_recent = df_recent["연평균기온"].values
+
+slope_recent, intercept_recent = np.polyfit(X_recent, y_recent, 1)
+
+# 100년당 기온 상승량 계산 (기울기 * 100)
+rate_100_all = slope_all * 100
+rate_100_recent = slope_recent * 100
+
+# 5. 상승 속도 비교 카드 (상단에 크게 표시)
+st.subheader("📈 100년당 기온 상승 속도 비교")
+col_rate1, col_rate2 = st.columns(2)
+
+with col_rate1:
+    st.metric(
+        label=f"전체 기간 ({df_yearly['연도'].min()}년 ~ {max_year}년)",
+        value=f"+{rate_100_all:.2f} °C / 100년",
+        help="전체 데이터를 바탕으로 계산한 100년당 기온 상승량입니다."
+    )
+
+with col_rate2:
+    # 전체 기간 대비 최근 20년의 가속도 계산
+    diff = rate_100_recent - rate_100_all
+    st.metric(
+        label=f"최근 20년 ({min_year_recent}년 ~ {max_year}년)",
+        value=f"+{rate_100_recent:.2f} °C / 100년",
+        delta=f"+{diff:.2f} °C 더 빠르게 상승 중" if diff > 0 else f"{diff:.2f} °C",
+        help="최근 20년 데이터만으로 계산한 100년당 기온 상승량입니다."
+    )
+
+st.divider()
+
+# 6. 기본 요약 정보
 num_years = len(df_yearly)
 start_year = int(df_yearly["연도"].min())
-end_year = int(df_yearly["연도"].max())
 
-# 4. 요약 정보 출력
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("분석 대상 연도 수", f"{num_years}개 해")
 col2.metric("시작 연도", f"{start_year}년")
-col3.metric("끝 연도", f"{end_year}년")
-col4.metric("상관계수 (r)", f"{correlation:.4f}")
+col3.metric("끝 연도", f"{max_year}년")
+col4.metric("전체 상관계수 (r)", f"{np.corrcoef(X_all, y_all)[0, 1]:.4f}")
 
 st.divider()
 
-# 5. 연도 선택 슬라이더 및 예상 기온 예측
+# 7. 연도 선택 슬라이더 및 예측값 계산 (전체 기간 모델 기준)
 selected_year = st.slider("예상 기온을 확인할 연도를 선택하세요", min_value=1900, max_value=2100, value=2026, step=1)
 
-# 예측값 계산 (x_pred = selected_year - 1908)
 x_pred = selected_year - 1908
-predicted_temp = slope * x_pred + intercept
+pred_all = slope_all * x_pred + intercept_all
+pred_recent = slope_recent * x_pred + intercept_recent
 
 st.subheader(f"🔮 {selected_year}년 예상 연평균 기온")
-st.title(f"{predicted_temp:.2f} °C")
+col_pred1, col_pred2 = st.columns(2)
+with col_pred1:
+    st.markdown(f"**전체 추세 기준:** `{pred_all:.2f} °C`")
+with col_pred2:
+    st.markdown(f"**최근 20년 추세 기준:** `{pred_recent:.2f} °C`")
 
 st.divider()
 
-# 6. Plotly 시각화
-# 회귀선 표시를 위한 전체 연도 범위 (1900 ~ 2100)
+# 8. Plotly 시각화 (두 개의 추세선 비교)
 line_years = np.arange(1900, 2101)
 line_x = line_years - 1908
-line_y = slope * line_x + intercept
+
+line_y_all = slope_all * line_x + intercept_all
+line_y_recent = slope_recent * line_x + intercept_recent
 
 fig = go.Figure()
 
-# 관측값 산점도
+# 관측 데이터 (산점도)
 fig.add_trace(go.Scatter(
     x=df_yearly["연도"],
     y=df_yearly["연평균기온"],
@@ -86,26 +120,35 @@ fig.add_trace(go.Scatter(
     marker=dict(size=8, color="#1f77b4")
 ))
 
-# 추세선 (회귀 직선)
+# 전체 기간 추세선
 fig.add_trace(go.Scatter(
     x=line_years,
-    y=line_y,
+    y=line_y_all,
     mode="lines",
-    name="회귀 직선",
+    name=f"전체 추세선 (+{rate_100_all:.2f}°C/100년)",
     line=dict(color="#ff7f0e", width=2)
 ))
 
-# 사용자가 선택한 연도 강조 표시
+# 최근 20년 추세선
+fig.add_trace(go.Scatter(
+    x=line_years,
+    y=line_y_recent,
+    mode="lines",
+    name=f"최근 20년 추세선 (+{rate_100_recent:.2f}°C/100년)",
+    line=dict(color="#d62728", width=2, dash="dash")
+))
+
+# 선택한 해 표시 (전체 추세선 기준)
 fig.add_trace(go.Scatter(
     x=[selected_year],
-    y=[predicted_temp],
+    y=[pred_all],
     mode="markers",
-    name=f"선택한 해 ({selected_year}년 예측)",
-    marker=dict(size=14, color="red", symbol="star")
+    name=f"선택 연도 ({selected_year}년)",
+    marker=dict(size=14, color="purple", symbol="star")
 ))
 
 fig.update_layout(
-    title="서울 연도별 연평균기온 변화 및 추세선",
+    title="서울 연도별 연평균기온 및 추세선 비교 (전체 vs 최근 20년)",
     xaxis_title="연도",
     yaxis_title="연평균기온 (°C)",
     hovermode="x unified",
