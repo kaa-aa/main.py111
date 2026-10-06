@@ -181,3 +181,76 @@ def evaluate(y_true, y_pred):
 mae_all, mse_all, r2_all = evaluate(df['Temp'], pred_all)
 mae_100, mse_100, r2_100 = evaluate(test_20['Temp'], pred_100)
 mae_50, mse_50, r2_50   = evaluate(test_20['Temp'], pred_50)
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import plotly.graph_objects as go
+
+st.set_page_config(page_title="서울 기온 곡선 회귀 예측기", page_icon="📈", layout="wide")
+
+st.title("📈 서울 연평균 기온 다항 회귀(곡선) 예측기")
+st.write("2005년 이전 데이터를 훈련용으로 학습하고, 2005년 이후(테스트용) 데이터에 대해 1차, 3차, 9차 곡선 모델의 예측 성능을 비교합니다.")
+
+# 1. 데이터 로드 및 전처리
+DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL, encoding="utf-8")
+    df.columns = df.columns.str.strip()
+    df['날짜'] = pd.to_datetime(df['날짜'])
+    df['연도'] = df['날짜'].dt.year
+    
+    # 2025년 이하 데이터 및 관측일수 300일 이상 필터링
+    df = df[df['연도'] <= 2025]
+    yearly_df = df.groupby('연도').agg(
+        연평균기온=('평균기온', 'mean'),
+        관측일수=('평균기온', 'count')
+    ).reset_index()
+    
+    yearly_clean = yearly_df[yearly_df['관측일수'] >= 300].copy()
+    return yearly_clean
+
+df_clean = load_data()
+
+# 수치 안정성을 위해 연도 스케일링 (1908년을 0으로 변환)
+BASE_YEAR = 1908
+df_clean['X_scaled'] = df_clean['연도'] - BASE_YEAR
+
+# 2. 훈련용(2005년 미만) / 테스트용(2005년 이상) 데이터 분할
+train_df = df_clean[df_clean['연도'] < 2005].copy()
+test_df  = df_clean[df_clean['연도'] >= 2005].copy()
+
+X_train = train_df[['X_scaled']]
+y_train = train_df['연평균기온']
+
+X_test = test_df[['X_scaled']]
+y_test = test_df['연평균기온']
+
+# 3. 데이터 개수 안내
+st.subheader("📌 데이터 분할 정보")
+col1, col2, col3 = st.columns(3)
+col1.metric("훈련용 데이터 (2005년 미만)", f"{len(train_df)}개 연도")
+col2.metric("테스트용 데이터 (2005년 이상)", f"{len(test_df)}개 연도")
+col3.metric("전체 데이터", f"{len(df_clean)}개 연도")
+
+st.markdown("---")
+
+# 4. 차수별 다항 회귀 모델 학습 및 평가
+degrees = [1, 3, 9]
+results = []
+models = {}
+
+# 2050년 스케일링 값
+target_2050_scaled = np.array([[2050 - BASE_YEAR]])
+
+for deg in degrees:
+    # PolynomialFeatures + LinearRegression 파이프라인
+    model = make_pipeline(PolynomialFeatures(degree=deg), LinearRegression())
+    model.fit(X_train, y_train)
+    models[deg] = model
